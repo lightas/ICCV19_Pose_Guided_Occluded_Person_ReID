@@ -32,7 +32,7 @@ cd ..
 
 ## Download pose landmarks and heatmaps
 
-Download [pose landmarks](https://drive.google.com/file/d/1taQBm34ZTICINK9gSORj-XbBxknnZpam/view?usp=sharing) and [heatmaps](https://drive.google.com/file/d/1T55MSPmImCrE-VVLeZPBVG6eR_VD0NPu/view?usp=sharing) into the root path. Unzip them.
+Download [pose landmarks](https://drive.google.com/file/d/1taQBm34ZTICINK9gSORj-XbBxknnZpam/view?usp=sharing) and [heatmaps](https://drive.google.com/file/d/1VVHgt-9FmBFaxAJ-70DSWyyK43LfO97l/view?usp=sharing) into the root path. Unzip them.
 
 ## Train
 
