@@ -28,7 +28,7 @@ parser.add_argument('--which_epoch',default='59', type=str, help='0,1,2,3...or l
 parser.add_argument('--test_dir',default='./dataset/Occluded_Duke/processed_data',type=str, help='./test_data')
 parser.add_argument('--result_dir',default='./result',type=str, help='result path')
 parser.add_argument('--name', default='PGFA', type=str, help='save model path')
-parser.add_argument('--batchsize', default=64, type=int, help='batchsize')
+parser.add_argument('--batchsize', default=32, type=int, help='batchsize')
 parser.add_argument('--gallery_heatmapdir',default='./heatmaps/18heatmap_gallery',type=str, help='gallery heatmap path')
 parser.add_argument('--query_heatmapdir',default='./heatmaps/18heatmap_query',type=str, help='query heatmap path')
 parser.add_argument('--gallery_posedir',default='./test_pose_storage/gallery/sep-json',type=str, help='gallery pose path')
@@ -80,6 +80,8 @@ class BaseDataset(Dataset):
         mask=torch.from_numpy(mask)
         mask=mask.float()
         return img,pid,cam_id,mask,imgname,h
+    def __len__(self):
+        return len(self.data)
 
 ######################################################################
 # Load model
@@ -87,14 +89,14 @@ class BaseDataset(Dataset):
 
 def load_network(name_,network):
     save_path = os.path.join(opt.result_dir,name,'%s_%s.pth'%(name_,opt.which_epoch))
-#    network.load_state_dict(torch.load(save_path))
-    pretrained_dict=torch.load(save_path)
-    model_dict=network.state_dict()
-    # 1. filter out unnecessary keys
-    pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
-    # 2. overwrite entries in the existing state dict
-    model_dict.update(pretrained_dict)
-    network.load_state_dict(model_dict)
+    network.load_state_dict(torch.load(save_path))
+#    pretrained_dict=torch.load(save_path)
+#    model_dict=network.state_dict()
+#    # 1. filter out unnecessary keys
+#    pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
+#    # 2. overwrite entries in the existing state dict
+#    model_dict.update(pretrained_dict)
+#    network.load_state_dict(model_dict)
     return network
 
 #########################################################################
@@ -105,12 +107,8 @@ def extract_global_feature(model,input_):
 def extract_partial_feature(model,global_feature,part_num):
     partial_feature=nn.AdaptiveAvgPool2d((part_num,1))(global_feature)
     partial_feature=torch.squeeze(partial_feature,-1)
-    output=[]
-    for i in range(part_num):
-        partial_f=model[i](partial_feature[:,:,i])
-        output.append(partial_f)
-    output= torch.cat(output,-1)
-    return output
+    partial_feature=partial_feature.permute(0,2,1)
+    return partial_feature
 ###
 def extract_pg_global_feature(model,global_feature,masks):
     pg_global_feature_1=nn.AdaptiveAvgPool2d((1,1))(global_feature)
@@ -140,22 +138,20 @@ def feature_extractor(data_path,mask_path,pose_path,model,partial_model,global_m
     total_label=[] #storage of gallery label
     total_cam=[] #storage of gallery cam
     list_img=[] 
-    count_g=0
-    part_label_count=0
 
     image_dataset = BaseDataset(data_path,mask_path)
     dataloader = torch.utils.data.DataLoader(image_dataset, batch_size=opt.batchsize,
-                                                 shuffle=False,num_workers=4)
+                                                 shuffle=False,num_workers=0)
     for it, data in enumerate(dataloader):
         imgs,pids,cam_ids,masks,imgnames,heights=data
         imgs= imgs.cuda()
         masks=masks.cuda()
         global_feature=extract_global_feature(model,imgs)
-        partial_feature = extract_partial_feature(partial_model,global_feature)
-        total_partial_feature.append(partial_feature)
+        partial_feature = extract_partial_feature(partial_model,global_feature,opt.part_num)
+        total_partial_feature.append(partial_feature.data.cpu())
         ##
         pg_global_feature=extract_pg_global_feature(global_model,global_feature,masks)
-        total_pg_global_feature.append(pg_global_feature)
+        total_pg_global_feature.append(pg_global_feature.data.cpu())
 
         ##
         total_label.extend(pids)
@@ -164,15 +160,15 @@ def feature_extractor(data_path,mask_path,pose_path,model,partial_model,global_m
         ###extract part label
         for imgname,h in zip(imgnames,heights):
             imgname=imgname.split('.')[0]
-            part_label=part_label_generate(pose_path,imgname,opt.part_num,h) #part label generation
+            part_label=part_label_generate(pose_path,imgname,opt.part_num,h.item()) #part label generation
             part_label=torch.from_numpy(part_label)
-            total_part_label.append(part_label)
-
+            part_label=part_label.unsqueeze(0)
+            total_part_label.append(part_label.float())
+        if it%10==0:
+            print('[{}/{}]'.format(it,len(dataloader)))
     total_part_label=torch.cat(total_part_label,0)
     total_partial_feature=torch.cat(total_partial_feature,0)
-    total_partial_feature=total_partial_feature.data.cpu()
     total_pg_global_feature=torch.cat(total_pg_global_feature,0)
-    total_pg_global_feature=total_pg_global_feature.data.cpu()
     total_label = np.array(total_label)
     total_cam=np.array(total_cam)
     return total_part_label,total_partial_feature,total_pg_global_feature,total_label,total_cam,list_img
@@ -228,6 +224,7 @@ def main():
 
     count=0
     CMC=torch.IntTensor(len(gallery_imgs)).zero_()    
+    ap=0.0
 
     for qf,qf2,qpl,ql,qc in zip(tqf,tqf2,tqpl,tql,tqc):
         (ap_tmp, CMC_tmp),index = evaluate(qf,qf2,qpl,ql,qc,tgf,tgf2,tgpl,tgl,tgc) #

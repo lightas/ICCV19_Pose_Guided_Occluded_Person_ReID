@@ -37,6 +37,7 @@ def part_label_generate(path,imgname,part_num,imgh):
                 w,h = final_point[j][:2]
                 for k in range(part_num):
                     if h> (float(k)/part_num)*imgh and h<(float(k+1.)/part_num)*imgh:
+
                         label[k]=1
             final_label=label
     return final_label
