@@ -253,6 +253,7 @@ if not os.path.isdir(dir_name):
 # save opts
 with open('%s/opts.json'%dir_name,'w') as fp:
     json.dump(vars(opt), fp, indent=1)
+print('start training')
 
 model = train_model(model,global_classifier,PCB_classifier, criterion,optimizer,exp_lr_scheduler,
                        num_epochs=60)

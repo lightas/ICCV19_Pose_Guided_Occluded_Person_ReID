@@ -90,13 +90,6 @@ class BaseDataset(Dataset):
 def load_network(name_,network):
     save_path = os.path.join(opt.result_dir,name,'%s_%s.pth'%(name_,opt.which_epoch))
     network.load_state_dict(torch.load(save_path))
-#    pretrained_dict=torch.load(save_path)
-#    model_dict=network.state_dict()
-#    # 1. filter out unnecessary keys
-#    pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
-#    # 2. overwrite entries in the existing state dict
-#    model_dict.update(pretrained_dict)
-#    network.load_state_dict(model_dict)
     return network
 
 #########################################################################
@@ -149,11 +142,11 @@ def feature_extractor(data_path,mask_path,pose_path,model,partial_model,global_m
         global_feature=extract_global_feature(model,imgs)
         partial_feature = extract_partial_feature(partial_model,global_feature,opt.part_num)
         total_partial_feature.append(partial_feature.data.cpu())
-        ##
+        #####
         pg_global_feature=extract_pg_global_feature(global_model,global_feature,masks)
         total_pg_global_feature.append(pg_global_feature.data.cpu())
 
-        ##
+        #####
         total_label.extend(pids)
         total_cam.extend(cam_ids)
         list_img.extend(imgnames)
@@ -181,7 +174,7 @@ def feature_extractor(data_path,mask_path,pose_path,model,partial_model,global_m
 
 
 
-# Load Collected data Trained model
+############# Load  Trained model
 print('-------test-----------')
 model_structure = PCB(opt.train_classnum)
 model = load_network('net',model_structure)
@@ -211,11 +204,17 @@ count=0
 ####################
 def main():
     print('extracting gallery feature...')
+    #####
+    # tgpl:total gallery part label; tgf:total gallery partial feature; tgf2:total gallery pose-guided global feature; tgl:total gallery label; tgc: total gallery camera id
+    ####
     tgpl,tgf,tgf2,tgl,tgc,gallery_imgs=feature_extractor(gallery_path,opt.gallery_heatmapdir,opt.gallery_posedir,
                                                             model,partial_model,global_model)
     print('gallery feature finished')    
 
     print('extracting query feature...')
+    #####
+    # tqpl:total query part label; tqf:total query partial feature; tqf2:total query pose-guided global feature; tql:total query label; tqc: total query camera id
+    ####
     tqpl,tqf,tqf2,tql,tqc,query_imgs=feature_extractor(query_path,opt.query_heatmapdir,opt.query_posedir,
                                                             model,partial_model,global_model)
     print('query feature finished')    

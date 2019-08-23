@@ -23,14 +23,13 @@ def evaluate(qf,qf2,qpl,ql,qc,gf,gf2,gpl,gl,gc):
     q2=F.normalize(qf2,p=2,dim=1)
     g2=F.normalize(gf2,p=2,dim=1)
     s2=q2*g2
-    
-    s2=s2.sum(1)
-    s2=(s2+1.)/2
+    s2=s2.sum(1) #calculate the cosine distance 
+    s2=(s2+1.)/2 # convert cosine distance range from [-1,1] to [0,1], because occluded part distance is set to 0
 
     ########Calculate the distance of partial features
     query = qf
     overlap=gpl*qpl
-    overlap=overlap.view(-1,gpl.size(1))
+    overlap=overlap.view(-1,gpl.size(1)) #Calculate the shared region part label
     
     qf=qf.expand_as(gf)
 
@@ -38,8 +37,8 @@ def evaluate(qf,qf2,qpl,ql,qc,gf,gf2,gpl,gl,gc):
     g=F.normalize(gf,p=2,dim=2)
     s=q*g
     
-    s=s.sum(2)
-    s=(s+1.)/2
+    s=s.sum(2) #Calculate the consine distance 
+    s=(s+1.)/2 # convert cosine distance range from [-1,1] to [0,1]
     s=s*overlap
     s=(s.sum(1)+s2)/(overlap.sum(1)+1)
     s=s.data.cpu()
