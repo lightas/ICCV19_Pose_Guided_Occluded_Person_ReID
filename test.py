@@ -24,12 +24,11 @@ from utils.part_label import part_label_generate
 # Options
 # --------
 parser = argparse.ArgumentParser(description='Training')
-parser.add_argument('--gpu_ids',default='2', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
 parser.add_argument('--which_epoch',default='59', type=str, help='0,1,2,3...or last')
 parser.add_argument('--test_dir',default='./dataset/Occluded_Duke/processed_data',type=str, help='./test_data')
 parser.add_argument('--result_dir',default='./result',type=str, help='result path')
 parser.add_argument('--name', default='PGFA', type=str, help='save model path')
-parser.add_argument('--batchsize', default=32, type=int, help='batchsize')
+parser.add_argument('--batchsize', default=64, type=int, help='batchsize')
 parser.add_argument('--gallery_heatmapdir',default='./heatmaps/18heatmap_gallery',type=str, help='gallery heatmap path')
 parser.add_argument('--query_heatmapdir',default='./heatmaps/18heatmap_query',type=str, help='query heatmap path')
 parser.add_argument('--gallery_posedir',default='./test_pose_storage/gallery/sep-json',type=str, help='gallery pose path')
@@ -40,22 +39,13 @@ parser.add_argument('--part_num', default=3, type=int, help='part_num')
 parser.add_argument('--hidden_dim', default=256, type=int, help='hidden_dim')
 opt = parser.parse_args()
 
-str_ids = opt.gpu_ids.split(',')
 name = opt.name
 test_dir = opt.test_dir
 
-gpu_ids = []
-for str_id in str_ids:
-    id = int(str_id)
-    if id >=0:
-        gpu_ids.append(id)
 
 # set gpu ids
-if len(gpu_ids)>0:
-    torch.cuda.set_device(gpu_ids[0])
 data_dir = test_dir
 ###
-use_gpu = torch.cuda.is_available()
 ######################################################################
 # Load Data
 # ---------
@@ -67,6 +57,30 @@ data_transforms = transforms.Compose([
 
 
 ######################################################################
+class BaseDataset(Dataset):
+    def __init__(self,test_datapath,mask_path):
+        self.datapath=test_datapath
+        self.transform=data_transforms
+        self.mask_path=mask_path
+        self.ids = sorted(os.listdir(self.datapath))
+        self.classnum=len(self.ids)
+        self.data=[]
+        for pid in sorted(self.ids):
+            for img in os.listdir(os.path.join(self.datapath,pid)):
+                imgpath = os.path.join(self.datapath,pid,img)
+                cam_id = int(img.split('c')[1][0])
+                self.data.append((imgpath,int(pid),int(cam_id),img))
+    def __getitem__(self,index):
+        imgpath,pid,cam_id,imgname=self.data[index]
+        img=Image.open(imgpath).convert('RGB')
+        w,h = img.size
+        img = self.transform(img)
+        mask_name = imgpath.split('/')[-1].split('.')[0]+'.npy'
+        mask=np.load(os.path.join(self.mask_path,mask_name))
+        mask=torch.from_numpy(mask)
+        mask=mask.float()
+        return img,pid,cam_id,mask,imgname,h
+
 ######################################################################
 # Load model
 #---------------------------
@@ -83,20 +97,81 @@ def load_network(name_,network):
     network.load_state_dict(model_dict)
     return network
 
+#########################################################################
+def extract_global_feature(model,input_):
+    output=model(input_)
+    output=output.data.cpu()
+    return output
+###
+def extract_partial_feature(model,global_feature,part_num):
+    partial_feature=nn.AdaptiveAvgPool2d((part_num,1))(global_feature)
+    partial_feature=torch.squeeze(partial_feature,-1)
+    output=[]
+    for i in range(part_num):
+        partial_f=model[i](partial_feature[:,:,i])
+        output.append(partial_f)
+    output= torch.cat(output,-1)
+    return output
+###
+def extract_pg_global_feature(model,global_feature,masks):
+    pg_global_feature_1=nn.AdaptiveAvgPool2d((1,1))(global_feature)
+    pg_global_feature_1=pg_global_feature_1.view(-1,2048)
+    pg_global_feature_2=[]
+    for i in range(18):  
+        mask=masks[:,i,:,:]
+        mask= torch.unsqueeze(mask,1)
+        mask=mask.expand_as(global_feature)
+        pg_feature_=mask*global_feature
+        pg_feature_=nn.AdaptiveAvgPool2d((1,1))(pg_feature_)
+        pg_feature_=pg_feature_.view(-1,2048,1)
+        pg_global_feature_2.append(pg_feature_)
+    pg_global_feature_2=torch.cat((pg_global_feature_2),2)
+    pg_global_feature_2=nn.AdaptiveMaxPool1d(1)(pg_global_feature_2)
+    pg_global_feature_2=pg_global_feature_2.view(-1,2048)
+    pg_global_feature=torch.cat((pg_global_feature_1,pg_global_feature_2),1)
+    pg_global_feature=model(pg_global_feature)
+    return pg_global_feature
+
+###
+def feature_extractor(data_path,mask_path,pose_path,model,partial_model,global_model):
+    total_gallery_part_label=[]
+
+    image_dataset = BaseDataset(data_path,mask_path)
+    dataloader = torch.utils.data.DataLoader(image_dataset, batch_size=opt.batchsize,
+                                                 shuffle=False,num_workers=4)
+    for it, data in enumerate(dataloader):
+        imgs,pids,cam_ids,masks,imgnames,heights=data
+        imgs= imgs.cuda()
+        global_feature=extract_global_feature(model,imgs)
+        partial_feature = extract_partial_feature(partial_model,global_feature)
+
+
+
+        
+
+
+
 
 # Load Collected data Trained model
 print('-------test-----------')
 model_structure = PCB(opt.train_classnum)
 model = load_network('net',model_structure)
-part_model_structure=ClassBlock(4096,opt.train_classnum,True,False,opt.hidden_dim)
-part_model=load_network('part',part_model_structure)
+global_model_structure=ClassBlock(4096,opt.train_classnum,True,False,opt.hidden_dim)
+global_model=load_network('global',global_model_structure)
+global_model.classifier=nn.Sequential()
+partial_model={}
+for i in range(opt.part_num):
+    part_model_=ClassBlock(2048,opt.train_classnum,True,False,opt.hidden_dim)
+    partial_model[i]=load_network('partial'+str(i),part_model_)
+    partial_model[i].classifier = nn.Sequential()
+    partial_model[i].eval()
+    partial_model[i]=partial_model[i].cuda()
+
 # Change to test mode
-part_model.classifier=nn.Sequential()
-model = model.eval()
-part_model=part_model.eval()
-if use_gpu:
-    model = model.cuda()
-    part_model=part_model.cuda()
+model.eval()
+global_model.eval()
+model = model.cuda()
+global_model=global_model.cuda()
 ##########Test data path
 gallery_path=os.path.join(opt.test_dir,'gallery')
 query_path=os.path.join(opt.test_dir,'query')
@@ -171,8 +246,7 @@ for pid in os.listdir(gallery_path): #pid refers to person id
 #        #################
 #        #######Pose guided global feature
         maskname =img.split('.')[0]+'.npy'
-        masks=np.load(os.path.join(GALLERY_DIR,maskname))
-        masks=torch.from_numpy(masks)
+        masks=np.load(os.path.join(GALLERY_DIR,maskname)masks=torch.from_numpy(masks)
         masks=masks.float()
         masks=torch.unsqueeze(masks,0)
         pg_global_feature_1=nn.AdaptiveAvgPool2d((1,1))(origin_feature) #Avg Pool Global Feature

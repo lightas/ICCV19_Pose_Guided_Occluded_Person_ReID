@@ -31,7 +31,6 @@ version =  torch.__version__
 # Options
 # --------
 parser = argparse.ArgumentParser(description='Training')
-parser.add_argument('--gpu_ids',default='1', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
 parser.add_argument('--name',default='PGFA', type=str, help='output model name')
 parser.add_argument('--data_dir',default='./dataset/Occluded_Duke/processed_data',type=str, help='training dir path')
 parser.add_argument('--batchsize', default=32, type=int, help='batchsize')
@@ -46,16 +45,8 @@ opt = parser.parse_args()
 TRAIN_MASK_DIR=opt.mask_dir # Generated attention heatmap by pose landmarks
 data_dir = opt.data_dir
 name = opt.name
-str_ids = opt.gpu_ids.split(',')
-gpu_ids = []
-for str_id in str_ids:
-    gid = int(str_id)
-    if gid >=0:
-        gpu_ids.append(gid)
 part_size=opt.part_num
 # set gpu ids
-if len(gpu_ids)>0:
-    torch.cuda.set_device(gpu_ids[0])
 #######
 transform_train_list = transforms.Compose([
         transforms.ToTensor(),
@@ -110,7 +101,6 @@ dataloaders =  torch.utils.data.DataLoader(image_datasets, batch_size=opt.batchs
 dataset_sizes =  len(image_datasets) 
 class_num = image_datasets.classnum
 
-use_gpu = torch.cuda.is_available()
 ######################################################################
 # Training the model
 # ------------------
@@ -121,7 +111,7 @@ y_loss['train'] = []
 y_err = {}
 y_err['train'] = []
 
-def train_model(model,global_classifier,PCB_classifier,criterion, optimizer,optimizer2,optimizer3, scheduler,scheduler2 ,scheduler3,num_epochs=25):
+def train_model(model,global_classifier,PCB_classifier,criterion, optimizer, scheduler,num_epochs=25):
     '''
     model: the backbone of our pipeline (ResNet50 without FC layer and Average Pooling layer)
     global_classifier: The classifier of Global Feature Branch
@@ -137,9 +127,6 @@ def train_model(model,global_classifier,PCB_classifier,criterion, optimizer,opti
         print('-' * 10)
 
         scheduler.step()
-        scheduler2.step()
-        for i in range(part_size):
-            scheduler3[i].step()
         model.train(True)  # Set model to training mode
         global_classifier.train(True)
         for i in range(part_size):
@@ -158,12 +145,9 @@ def train_model(model,global_classifier,PCB_classifier,criterion, optimizer,opti
             if now_batch_size<opt.batchsize: # skip the last batch
                 continue
             # wrap them in Variable
-            if use_gpu:
-                inputs = Variable(inputs.cuda())
-                labels = Variable(labels.cuda())
-                masks = masks.cuda()
-            else:
-                inputs, labels,masks = Variable(inputs), Variable(labels)
+            inputs = Variable(inputs.cuda())
+            labels = Variable(labels.cuda())
+            masks = masks.cuda()
             
             features = model(inputs) # Extract ResNet50 Feature
 
@@ -202,14 +186,8 @@ def train_model(model,global_classifier,PCB_classifier,criterion, optimizer,opti
             loss=opt.lamb*PCBloss+loss2*(1-opt.lamb) 
             ###########################################
             optimizer.zero_grad()
-            optimizer2.zero_grad()
-            for i in range(part_size):
-                optimizer3[i].zero_grad()
             loss.backward()
             optimizer.step()
-            optimizer2.step()
-            for i in range(part_size):
-                optimizer3[i].step()
 
             running_loss2.update(loss2.item(),now_batch_size)
 
@@ -219,11 +197,11 @@ def train_model(model,global_classifier,PCB_classifier,criterion, optimizer,opti
                     print('Loss1_{}:{:.3f} ({:.3f}) \t'.format(i+1,running_loss[i].val,running_loss[i].avg))
                 print('Loss2:{:.3f} ({:.3f}) \t'.format(running_loss2.val,running_loss2.avg))
                         
-        if epoch%10 == 9:
+        if epoch%10 == 9 or epoch==0:
             save_network('net',model, epoch)
-            save_network('part',global_classifier,epoch)
+            save_network('global',global_classifier,epoch)
             for i in range(part_size):
-                save_network('clf'+str(i), PCB_classifier[i],epoch)
+                save_network('partial'+str(i), PCB_classifier[i],epoch)
     return model
 
 
@@ -234,8 +212,7 @@ def save_network(name_,network, epoch_label):
     save_filename = '%s_%s.pth'%(name_, epoch_label)
     save_path = os.path.join(opt.result_dir,name,save_filename)
     torch.save(network.cpu().state_dict(), save_path)
-    if torch.cuda.is_available():
-        network.cuda(gpu_ids[0])
+    network = network.cuda()
 
 
 ######################################################################
@@ -251,24 +228,19 @@ PCB_classifier={}
 for i in range(part_size):
     PCB_classifier[i]=ClassBlock(2048,class_num,True,False,opt.hidden_dim)
 
-if use_gpu:
-    model = model.cuda()
-    global_classifier=global_classifier.cuda()
-    for i in range(part_size):
-        PCB_classifier[i].cuda()
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(model.parameters(),lr=opt.lr*0.1, weight_decay=opt.weight_decay, momentum=0.9, nesterov=True) 
-optimizer2 = optim.SGD(global_classifier.parameters(),lr=opt.lr, weight_decay=opt.weight_decay, momentum=0.9, nesterov=True)
-optimizer3={}
+model = model.cuda()
+global_classifier=global_classifier.cuda()
 for i in range(part_size):
-    optimizer3[i]=optim.SGD(PCB_classifier[i].parameters(),lr=opt.lr,weight_decay=opt.weight_decay,momentum=0.9,nesterov=True)
+    PCB_classifier[i].cuda()
+criterion = nn.CrossEntropyLoss()
+param_groups=[{'params': model.parameters(),'lr':opt.lr*0.1},
+                {'params': global_classifier.parameters()}]
+for i in range(part_size):
+    param_groups.append({'params':PCB_classifier[i].parameters()})
+optimizer = optim.SGD(param_groups,lr=opt.lr, weight_decay=opt.weight_decay, momentum=0.9, nesterov=True) 
 
 # Decay LR by a factor of 0.1 every 40 epochs
 exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=40, gamma=0.1)
-scheduler2 = lr_scheduler.StepLR(optimizer2, step_size=40, gamma=0.1)
-scheduler3 ={}
-for i in range(part_size):
-    scheduler3[i]=lr_scheduler.StepLR(optimizer3[i], step_size=40, gamma=0.1)
 
 ######################################################################
 # Train and evaluate
@@ -282,6 +254,6 @@ if not os.path.isdir(dir_name):
 with open('%s/opts.json'%dir_name,'w') as fp:
     json.dump(vars(opt), fp, indent=1)
 
-model = train_model(model,global_classifier,PCB_classifier, criterion,optimizer,optimizer2, optimizer3,exp_lr_scheduler,scheduler2,scheduler3,
+model = train_model(model,global_classifier,PCB_classifier, criterion,optimizer,exp_lr_scheduler,
                        num_epochs=60)
 
