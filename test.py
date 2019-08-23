@@ -100,7 +100,6 @@ def load_network(name_,network):
 #########################################################################
 def extract_global_feature(model,input_):
     output=model(input_)
-    output=output.data.cpu()
     return output
 ###
 def extract_partial_feature(model,global_feature,part_num):
@@ -134,7 +133,15 @@ def extract_pg_global_feature(model,global_feature,masks):
 
 ###
 def feature_extractor(data_path,mask_path,pose_path,model,partial_model,global_model):
-    total_gallery_part_label=[]
+    total_part_label=[]
+
+    total_partial_feature=[]  #storage of partial feature 
+    total_pg_global_feature=[] #storage of pose guided global feature
+    total_label=[] #storage of gallery label
+    total_cam=[] #storage of gallery cam
+    list_img=[] 
+    count_g=0
+    part_label_count=0
 
     image_dataset = BaseDataset(data_path,mask_path)
     dataloader = torch.utils.data.DataLoader(image_dataset, batch_size=opt.batchsize,
@@ -142,8 +149,34 @@ def feature_extractor(data_path,mask_path,pose_path,model,partial_model,global_m
     for it, data in enumerate(dataloader):
         imgs,pids,cam_ids,masks,imgnames,heights=data
         imgs= imgs.cuda()
+        masks=masks.cuda()
         global_feature=extract_global_feature(model,imgs)
         partial_feature = extract_partial_feature(partial_model,global_feature)
+        total_partial_feature.append(partial_feature)
+        ##
+        pg_global_feature=extract_pg_global_feature(global_model,global_feature,masks)
+        total_pg_global_feature.append(pg_global_feature)
+
+        ##
+        total_label.extend(pids)
+        total_cam.extend(cam_ids)
+        list_img.extend(imgnames)
+        ###extract part label
+        for imgname,h in zip(imgnames,heights):
+            imgname=imgname.split('.')[0]
+            part_label=part_label_generate(pose_path,imgname,opt.part_num,h) #part label generation
+            part_label=torch.from_numpy(part_label)
+            total_part_label.append(part_label)
+
+    total_part_label=torch.cat(total_part_label,0)
+    total_partial_feature=torch.cat(total_partial_feature,0)
+    total_partial_feature=total_partial_feature.data.cpu()
+    total_pg_global_feature=torch.cat(total_pg_global_feature,0)
+    total_pg_global_feature=total_pg_global_feature.data.cpu()
+    total_label = np.array(total_label)
+    total_cam=np.array(total_cam)
+    return total_part_label,total_partial_feature,total_pg_global_feature,total_label,total_cam,list_img
+
 
 
 
@@ -178,200 +211,36 @@ query_path=os.path.join(opt.test_dir,'query')
 gllist=os.listdir(gallery_path)
 ap = 0.0
 count=0
-#############heatmap path and pose landmark path
-GALLERY_DIR=opt.gallery_heatmapdir
-QUERY_DIR=opt.query_heatmapdir
-gallery_pose_dir=opt.gallery_posedir
-query_pose_dir = opt.query_posedir
+
 ####################
-print('extract_gallery feature...')
-###################Extract gallery feature
-total_gallery_part_label=torch.Tensor()
-total_gallery_partial_feature=[]  #storage of partial feature 
-total_gallery_pg_global_feature=[] #storage of pose guided global feature
-total_gallery_label=[] #storage of gallery label
-total_gallery_cam=[] #storage of gallery cam
-gallery_img=[] 
-count_g=0
-part_label_count=0
-for pid in os.listdir(gallery_path): #pid refers to person id
-    for img in os.listdir(os.path.join(gallery_path,pid)):
-        ####Extract global feature
-        gallery_img.append(img)
-        img_=Image.open(os.path.join(gallery_path,pid,img))
-        w,h=img_.size
-        img_=data_transforms(img_)
-        img_=torch.unsqueeze(img_,0)
-        input_im=Variable(img_.cuda())
-        output=model(input_im)
-        global_feature=output.data.cpu()
-        origin_feature=global_feature
-        ####
-        gl=img.split('_')[0] #gl refers to gallery label
-        if gl[0:2]=='-1':
-            gl=-1
-        else:
-            gl=int(gl)
-        
-        gc=int(img.split('c')[1][0]) #gc refers to gallery camera id
-        total_gallery_label.append(gl)
-        total_gallery_cam.append(gc)
-        ####
-        imgname=img.split('.')[0]
-        part_label=part_label_generate(gallery_pose_dir,imgname,opt.part_num,h) #part label generation
-        part_label=torch.from_numpy(part_label)
+def main():
+    print('extracting gallery feature...')
+    tgpl,tgf,tgf2,tgl,tgc,gallery_imgs=feature_extractor(gallery_path,opt.gallery_heatmapdir,opt.gallery_posedir,
+                                                            model,partial_model,global_model)
+    print('gallery feature finished')    
 
-        ###################################Partial Features
-        partial_feature=nn.AdaptiveAvgPool2d((opt.part_num,1))(global_feature)
-        partial_feature=torch.squeeze(partial_feature)
-        partial_feature=partial_feature.permute(1,0)
+    print('extracting query feature...')
+    tqpl,tqf,tqf2,tql,tqc,query_imgs=feature_extractor(query_path,opt.query_heatmapdir,opt.query_posedir,
+                                                            model,partial_model,global_model)
+    print('query feature finished')    
 
+    print('CMC calculating...')    
 
-        final_partial_features=torch.Tensor()
-        count_zero=0
-        for i,p in enumerate(part_label):
-            if p==0:
-                a=torch.zeros(1,2048)
-                final_partial_features=torch.cat((final_partial_features,a),0)
-                count_zero+=1
-            else:
-                a = partial_feature[i]
-                a = a.view(1,2048)
-                final_partial_features=torch.cat((final_partial_features,a),0) 
-        part_label=part_label.float()
-        part_label = torch.unsqueeze(part_label,0)
-        final_partial_features=torch.unsqueeze(final_partial_features,0)
-        total_gallery_partial_feature.append(final_partial_features)
-        total_gallery_part_label=torch.cat((total_gallery_part_label,part_label),0)
-#        #################
-#        #######Pose guided global feature
-        maskname =img.split('.')[0]+'.npy'
-        masks=np.load(os.path.join(GALLERY_DIR,maskname)masks=torch.from_numpy(masks)
-        masks=masks.float()
-        masks=torch.unsqueeze(masks,0)
-        pg_global_feature_1=nn.AdaptiveAvgPool2d((1,1))(origin_feature) #Avg Pool Global Feature
-        pg_global_feature_1=pg_global_feature_1.view(1,2048)
-        pg_global_feature_2=torch.Tensor()
-        for i in range(18):                     #masks multiply global feature element-wisely
-            mask=masks[:,i,:,:]
-            mask=torch.unsqueeze(mask,1)
-            mask=mask.expand_as(origin_feature)
-            pg_feature_=mask*origin_feature
-            pg_feature_=nn.AdaptiveAvgPool2d((1,1))(pg_feature_)
-            pg_feature_=pg_feature_.view(1,2048,1)
-            pg_global_feature_2=torch.cat((pg_global_feature_2,pg_feature_),2)
-        pg_global_feature_2=nn.AdaptiveMaxPool1d(1)(pg_global_feature_2)
-        pg_global_feature_2=pg_global_feature_2.view(1,2048) #masked global feature
-        pg_global_feature=torch.cat((pg_global_feature_1,pg_global_feature_2),1)
-        pg_global_feature=pg_global_feature.cuda()
-        pg_global_feature=part_model(pg_global_feature)
-        pg_global_feature=pg_global_feature.data.cpu()
-        total_gallery_pg_global_feature.append(pg_global_feature)
+    count=0
+    CMC=torch.IntTensor(len(gallery_imgs)).zero_()    
 
-        count_g+=1
-###################################
-total_gallery_partial_feature=torch.cat(total_gallery_partial_feature,0)
-total_gallery_pg_global_feature=torch.cat(total_gallery_pg_global_feature,0)
-total_gallery_label=np.array(total_gallery_label)
-total_gallery_cam=np.array(total_gallery_cam)
-################################
-tgl=total_gallery_label
-tgc=total_gallery_cam
-##################################################
-
-tgf=total_gallery_partial_feature
-tgf2=total_gallery_pg_global_feature
-tgpl=total_gallery_part_label
-CMC = torch.IntTensor(tgf.size(0)).zero_()
-#################################
-##################################
-print('gallery feature finish')
-#################################query feature extration and matching
-count_q=0                
-for pid in os.listdir(query_path):
-    for img in os.listdir(os.path.join(query_path,pid)):
-        img_=Image.open(os.path.join(query_path,pid,img))
-        w,h=img_.size
-            
-        img_=data_transforms(img_)
-        img_=torch.unsqueeze(img_,0)
-        input_im=Variable(img_.cuda())
-        output=model(input_im)
-        global_feature=output.data.cpu()
-        ql=int(img.split('_')[0]) #query label
-        qc=int(img.split('c')[1][0])# query camera
-
-
-        ##############
-
-        imgname=img.split('.')[0]
-        part_label=part_label_generate(query_pose_dir,imgname,opt.part_num,h) #query part label
-        part_label = torch.from_numpy(part_label)
-
-       ##########Query pose guided global feature
-        maskname =img.split('.')[0]+'.npy'
-        masks=np.load(os.path.join(QUERY_DIR,maskname))
-        masks=torch.from_numpy(masks)
-        masks=masks.float()
-        masks=torch.unsqueeze(masks,0)
-        pg_global_feature_1=nn.AdaptiveAvgPool2d((1,1))(global_feature)
-        pg_global_feature_1=pg_global_feature_1.view(1,2048)
-        pg_global_feature_2=torch.Tensor()
-        for i in range(18):
-            mask=masks[:,i,:,:]
-            mask=torch.unsqueeze(mask,1)
-            mask=mask.expand_as(global_feature)
-            pg_feature_=mask*global_feature
-            pg_feature_=nn.AdaptiveAvgPool2d((1,1))(pg_feature_)
-            pg_feature_=pg_feature_.view(1,2048,1)
-            pg_global_feature_2=torch.cat((pg_global_feature_2,pg_feature_),2)
-        pg_global_feature_2=nn.AdaptiveMaxPool1d(1)(pg_global_feature_2)
-        pg_global_feature_2=pg_global_feature_2.view(1,2048)
-        pg_global_feature=torch.cat((pg_global_feature_1,pg_global_feature_2),1)
-        pg_global_feature=pg_global_feature.cuda()
-        pg_global_feature=part_model(pg_global_feature)
-        pg_global_feature=pg_global_feature.data.cpu()
-        qf2=pg_global_feature #qf2 refers to query pose-guided global feature
-       ###########Query partial feature
-        partial_feature=nn.AdaptiveAvgPool2d((opt.part_num,1))(global_feature)
-        partial_feature=torch.squeeze(partial_feature)
-        partial_feature=partial_feature.permute(1,0)
-
-            
-
-
-        final_partial_features=torch.Tensor()
-        count_zero=0
-        for i,p in enumerate(part_label):
-            if p==0:
-                a=torch.zeros(1,2048)
-                final_partial_features=torch.cat((final_partial_features,a),0)
-                count_zero+=1
-            else:
-                a=partial_feature[i]
-                a=a.view(1,2048)
-                final_partial_features=torch.cat((final_partial_features,a),0) 
-        
-
-        qf=final_partial_features ##qf refers to query partial features
-        qpl=part_label.float() ## qp refers to query part label
-###########################
-
-###########################Evaluation
-        ####
-        # qf:query partial features; qf2:query pose-guided global features; qpl:query part label; ql:query label; qc:query camera id
-        # tgf:total gallery partial features; tgf2:total gallery pose-guided global feature; tgpl:total gallery part label;
-        #  tgl:total gallery label; tgc:total gallery camera id
-        ###
+    for qf,qf2,qpl,ql,qc in zip(tqf,tqf2,tqpl,tql,tqc):
         (ap_tmp, CMC_tmp),index = evaluate(qf,qf2,qpl,ql,qc,tgf,tgf2,tgpl,tgl,tgc) #
         if CMC_tmp[0]==-1:
             continue
         CMC = CMC + CMC_tmp
         ap += ap_tmp
         count+=1
+    CMC = CMC.float()
+    CMC = CMC/count #average CMC
+    print('Rank@1    Rank@5   Rank@10    mAP')
+    print('---------------------------------')
+    print('{:.4f}    {:.4f}    {:.4f}    {:.4f}'.format(CMC[0],CMC[4],CMC[9],ap/count))
 
-CMC = CMC.float()
-CMC = CMC/count #average CMC
-print('Rank@1    Rank@5   Rank@10    mAP')
-print('---------------------------------')
-print('{:.4f}    {:.4f}    {:.4f}    {:.4f}'.format(CMC[0],CMC[4],CMC[9],ap/count))
+if __name__=='__main__':
+    main()
