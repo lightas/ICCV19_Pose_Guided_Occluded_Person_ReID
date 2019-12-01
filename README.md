@@ -45,3 +45,15 @@ python train.py
 python test.py
 ```
 
+
+##Inference on Partial_REID or Partial_iLIDS
+
+Model link:  https://drive.google.com/file/d/1VarCCCaWZlDYX3La2r8VZpB9rZoHocMm/view?usp=sharing
+Heatmaps link:  https://drive.google.com/file/d/1VAmMgGym9XfxAMeq_YmzydDI50KTqnsl/view?usp=sharing
+```
+   GALLERY_DIR='/your/path/to/heatmaps/Partial_REID/18heatmap_gallery'
+   QUERY_DIR='/your/path/to/heatmaps/Partial_REID/18heatmap_query'
+   gallery_pose_dir='your/path/to/heatmaps/Partial_REID/gallery_json_1'
+   query_pose_dir='your/path/to/heatmaps/Partial_REID/query_json_1'
+   python test.py --name market_ckp --part_num 6 --test_dir /your/dataset/path/ —-gallery_heatmapdir $GALLERY_DIR --query_heatmapdir $QUERY_DIR --gallery_posedir $gallery_pose_dir --query_posedir $query_pose_dir --train_classnum 751
+```
