@@ -48,6 +48,8 @@ python test.py
 
 ## Inference on Partial_REID or Partial_iLIDS
 
+./dataset2.zip : Partial_REID and Partial_iLIDS with holistic images.
+
 Model link:  https://drive.google.com/file/d/1VarCCCaWZlDYX3La2r8VZpB9rZoHocMm/view?usp=sharing
 
 Heatmaps link:  https://drive.google.com/file/d/1VAmMgGym9XfxAMeq_YmzydDI50KTqnsl/view?usp=sharing
