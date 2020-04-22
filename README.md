@@ -52,7 +52,7 @@ python test.py
 
 You can directly use the processed data to run the code. 
 
-Data link: https://drive.google.com/file/d/1YGJFJ0Og6MGjCVKbir0jpKbDDBDcsBKW/view?usp=sharing
+Data link: https://drive.google.com/file/d/1ErCEQsNHSHpgZF3-NNj6_OH322vpk8gn/view?usp=sharing
 
 Model link:  https://drive.google.com/file/d/1VarCCCaWZlDYX3La2r8VZpB9rZoHocMm/view?usp=sharing
 
