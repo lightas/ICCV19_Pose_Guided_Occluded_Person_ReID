@@ -50,6 +50,10 @@ python test.py
 
 ./dataset2.zip : Partial_REID and Partial_iLIDS with holistic images.
 
+You can directly use the processed data to run the code. 
+
+Data link: https://drive.google.com/file/d/1YGJFJ0Og6MGjCVKbir0jpKbDDBDcsBKW/view?usp=sharing
+
 Model link:  https://drive.google.com/file/d/1VarCCCaWZlDYX3La2r8VZpB9rZoHocMm/view?usp=sharing
 
 Heatmaps link:  https://drive.google.com/file/d/1VAmMgGym9XfxAMeq_YmzydDI50KTqnsl/view?usp=sharing
