@@ -64,3 +64,16 @@ Heatmaps link:  https://drive.google.com/file/d/1VAmMgGym9XfxAMeq_YmzydDI50KTqns
    query_pose_dir='your/path/to/heatmaps/Partial_REID/query_json_1'
    python test.py --name market_ckp --part_num 6 --test_dir /your/dataset/path/ —-gallery_heatmapdir $GALLERY_DIR --query_heatmapdir $QUERY_DIR --gallery_posedir $gallery_pose_dir --query_posedir $query_pose_dir --train_classnum 751
 ```
+
+
+## Citation
+Please cite this paper in your publications if it helps your research:
+```
+@inproceedings{miao2019pose,
+  title={Pose-guided feature alignment for occluded person re-identification},
+  author={Miao, Jiaxu and Wu, Yu and Liu, Ping and Ding, Yuhang and Yang, Yi},
+  booktitle={Proceedings of the IEEE International Conference on Computer Vision},
+  pages={542--551},
+  year={2019}
+}
+```
